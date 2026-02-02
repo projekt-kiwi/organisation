@@ -1,6 +1,6 @@
 import { ref, shallowRef } from 'vue'
 
-const DB_URL = '/kiwi.db'
+const DB_URL = `${import.meta.env.BASE_URL}kiwi.db`
 
 async function getInitSqlJs() {
   const m = await import('sql.js')

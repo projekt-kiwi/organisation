@@ -71,7 +71,7 @@ async function loadDateSuggestions() {
   dateSuggestionsLoading.value = true
   dateSuggestionsError.value = null
   try {
-    const res = await fetch('/date_suggestions.csv')
+    const res = await fetch(`${import.meta.env.BASE_URL}date_suggestions.csv`)
     if (!res.ok) throw new Error(`Failed to load: ${res.status}`)
     const text = await res.text()
     const lines = text.split(/\r?\n/).filter((l) => l.trim())
