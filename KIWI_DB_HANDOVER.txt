@@ -1,0 +1,44 @@
+KIWi Consortium Database – Handover
+====================================
+
+File: kiwi.db (SQLite 3)
+
+You have everything you need in this file. No other files or code are required to read or query the data.
+
+HOW TO OPEN
+-----------
+• Command line:  sqlite3 kiwi.db
+• GUI:          DB Browser for SQLite (free), or any tool that supports SQLite
+• Python:       import sqlite3; conn = sqlite3.connect("kiwi.db")
+• Excel:        Get the SQLite ODBC driver, then connect to kiwi.db
+
+TABLES (what’s in there)
+------------------------
+schools                 – name, school_type (Volksschule / Sekundarstufe I / Sekundarstufe II)
+persons                 – name, email_primary, email_secondary (your contacts)
+hosting_organisations   – name (FH OÖ, RISC, RISE2REALITY, SCCH)
+workshops               – name, hosting_organisation_id (which org runs the workshop)
+school_contact          – school_id, person_id (which person is contact for which school)
+school_workshop         – school_id, workshop_id (which workshop is offered at which school)
+
+QUICK EXAMPLES (run in sqlite3 or any SQL client)
+-------------------------------------------------
+List all schools:
+  SELECT * FROM schools ORDER BY school_type, name;
+
+Get contact for a school:
+  SELECT p.name, p.email_primary FROM school_contact sc
+  JOIN persons p ON sc.person_id = p.id
+  JOIN schools s ON sc.school_id = s.id
+  WHERE s.name = 'MS Pregarten';
+
+List workshops at a school (with hosting org):
+  SELECT w.name AS workshop, h.name AS host FROM school_workshop sw
+  JOIN workshops w ON sw.workshop_id = w.id
+  JOIN hosting_organisations h ON w.hosting_organisation_id = h.id
+  JOIN schools s ON sw.school_id = s.id
+  WHERE s.name = 'Petrinum';
+
+See full schema:
+  .schema
+  (in sqlite3 command line)
