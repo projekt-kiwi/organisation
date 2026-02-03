@@ -16,6 +16,11 @@ const {
 
 const activeTab = ref('organisation') // 'organisation' | 'schools' | 'workshops' | 'dates'
 
+const bgBrgFreistadtPdfUrl = `${import.meta.env.BASE_URL}documents/bgbrgfreistadt.pdf`
+function isBgBrgFreistadt(schoolName) {
+  return schoolName && (schoolName === 'BG/BRG Freistadt' || String(schoolName).includes('Freistadt'))
+}
+
 const dateSuggestions = ref([])
 const dateSuggestionsLoading = ref(false)
 const dateSuggestionsError = ref(null)
@@ -505,6 +510,9 @@ watch(activeTab, (tab) => {
                 <span class="expand-icon" aria-hidden="true">{{ expandedDateSchoolKey === card.school ? '−' : '+' }}</span>
               </button>
               <div v-show="expandedDateSchoolKey === card.school" class="date-slots-card-details">
+                <div v-if="isBgBrgFreistadt(card.school)" class="date-slots-document">
+                  <a :href="bgBrgFreistadtPdfUrl" target="_blank" rel="noopener noreferrer" class="date-slots-document-link">Dokument ansehen (PDF) ↗</a>
+                </div>
                 <template v-if="card.noResponse">
                   <div v-if="card.email" class="date-slots-contact">
                     <a :href="`mailto:${card.email}`" class="date-slots-email">{{ card.email }}</a>
@@ -1047,6 +1055,22 @@ body {
 .date-slots-card-details {
   padding: 0 1.25rem 1.25rem;
   border-top: 1px solid #ebe8e4;
+}
+
+.date-slots-document {
+  margin-bottom: 0.75rem;
+}
+
+.date-slots-document-link {
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #2d6a4f;
+  text-decoration: none;
+}
+
+.date-slots-document-link:hover {
+  text-decoration: underline;
 }
 
 .date-slots-card-details .date-slots-contact {
