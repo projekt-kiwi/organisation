@@ -14,7 +14,127 @@ const {
   schoolWorkshops,
 } = useKiwiDb()
 
-const activeTab = ref('organisation') // 'organisation' | 'schools' | 'workshops' | 'dates'
+const activeTab = ref('organisation') // 'organisation' | 'schools' | 'workshops' | 'dates' | 'antraege'
+
+// Anträge (applications) – list of school folder ids and display names
+const ANTRAGE_SCHOOL_IDS = ['borg_perg', 'hak_freistadt', 'ms_reichenau', 'ms_strassgang', 'ms_wolfsegg']
+function antraegeSchoolDisplayName(id) {
+  const parts = id.split('_')
+  return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
+}
+const antraegeBase = () => `${import.meta.env.BASE_URL}antraege`
+const antraegePdfUrl = (id) => `${antraegeBase()}/${id}/${id}.pdf`
+const antraegeCsvUrl = (id) => `${antraegeBase()}/${id}/${id}_zuschuss_checklist.csv`
+const antraegeMdUrl = (id) => `${antraegeBase()}/${id}/assessment_${id}.md`
+
+const antraegeData = ref({}) // { [schoolId]: { csvRows: [], csvError, mdText, mdError } }
+const antraegeLoading = ref(false)
+const antraegeLoaded = ref(false)
+
+// Parse CSV that may contain newlines inside quoted fields (3 columns: Kriterium, erfüllt ja, erfüllt nein)
+function parseCsvWithNewlines(text) {
+  const rows = []
+  let i = 0
+  function skipWs() {
+    while (i < text.length && (text[i] === ' ' || text[i] === '\r' || text[i] === '\n' || text[i] === '\t')) i += 1
+  }
+  function readField() {
+    skipWs()
+    if (i >= text.length) return ''
+    if (text[i] === '"') {
+      i += 1
+      let field = ''
+      while (i < text.length) {
+        if (text[i] === '"' && text[i + 1] === '"') {
+          field += '"'
+          i += 2
+        } else if (text[i] === '"') {
+          i += 1
+          break
+        } else {
+          field += text[i]
+          i += 1
+        }
+      }
+      if (text[i] === ',') i += 1
+      return field.trim()
+    }
+    let field = ''
+    while (i < text.length && text[i] !== ',') {
+      field += text[i]
+      i += 1
+    }
+    if (text[i] === ',') i += 1
+    return field.trim()
+  }
+  while (i < text.length) {
+    skipWs()
+    if (i >= text.length) break
+    const a = readField()
+    const b = readField()
+    const c = readField()
+    if (a || b || c) rows.push([a, b, c])
+  }
+  return rows
+}
+
+// Derive acceptance/revision tag from assessment markdown text
+function parseAssessmentTag(mdText) {
+  if (!mdText || !mdText.trim()) return null
+  const t = mdText.trim().toLowerCase()
+  if (t.includes('genehmigungsfähig') && !t.includes('nicht genehmigungsfähig')) {
+    return { key: 'ok', label: 'Genehmigungsfähig' }
+  }
+  if (t.includes('nicht genehmigungsfähig') || t.includes('nicht genehmigungsfaehig')) {
+    return { key: 'nicht-ok', label: 'Nicht genehmigungsfähig' }
+  }
+  if (t.includes('überarbeitung empfohlen') || t.includes('ueberarbeitung empfohlen') || t.includes('überarbeitung') || t.includes('angreifbar') || t.includes('grenzbereich')) {
+    return { key: 'ueberarbeitung', label: 'Überarbeitung empfohlen' }
+  }
+  return null
+}
+
+async function loadAntraegeForSchool(id) {
+  if (antraegeData.value[id]) return
+  const entry = { csvRows: [], csvError: null, mdText: '', mdError: null, assessmentTag: null }
+  antraegeData.value = { ...antraegeData.value, [id]: entry }
+  try {
+    const [csvRes, mdRes] = await Promise.all([
+      fetch(antraegeCsvUrl(id)),
+      fetch(antraegeMdUrl(id)),
+    ])
+    if (csvRes.ok) {
+      const text = await csvRes.text()
+      const rows = parseCsvWithNewlines(text)
+      if (rows.length > 0 && rows[0][0] === 'Kriterium') {
+        entry.csvRows = rows.slice(1)
+      } else {
+        entry.csvRows = rows
+      }
+    } else {
+      entry.csvError = csvRes.status === 404 ? 'Checkliste nicht gefunden' : `Fehler ${csvRes.status}`
+    }
+    if (mdRes.ok) {
+      entry.mdText = await mdRes.text()
+      entry.assessmentTag = parseAssessmentTag(entry.mdText)
+    } else {
+      entry.mdError = mdRes.status === 404 ? 'Assessment nicht gefunden' : `Fehler ${mdRes.status}`
+    }
+  } catch (e) {
+    entry.csvError = entry.csvError || e.message || String(e)
+    entry.mdError = entry.mdError || e.message || String(e)
+  }
+}
+
+async function loadAntraege() {
+  antraegeLoading.value = true
+  try {
+    await Promise.all(ANTRAGE_SCHOOL_IDS.map((id) => loadAntraegeForSchool(id)))
+    antraegeLoaded.value = true
+  } finally {
+    antraegeLoading.value = false
+  }
+}
 
 const bgBrgFreistadtPdfUrl = `${import.meta.env.BASE_URL}documents/bgbrgfreistadt.pdf`
 function isBgBrgFreistadt(schoolName) {
@@ -258,9 +378,15 @@ function toggleSchoolInOrgExpand(workshopId, schoolName) {
   expandedSchoolInOrgKey.value = expandedSchoolInOrgKey.value === key ? null : key
 }
 
+const expandedAntraegeSchoolId = ref(null)
+function toggleAntraegeSchool(schoolId) {
+  expandedAntraegeSchoolId.value = expandedAntraegeSchoolId.value === schoolId ? null : schoolId
+}
+
 onMounted(load)
 watch(activeTab, (tab) => {
   if (tab === 'dates') loadDateSuggestions()
+  if (tab === 'antraege' && !antraegeLoaded.value) loadAntraege()
 })
 </script>
 
@@ -322,6 +448,16 @@ watch(activeTab, (tab) => {
           @click="activeTab = 'dates'"
         >
           Terminvorschläge
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="tab"
+          :class="{ active: activeTab === 'antraege' }"
+          :aria-selected="activeTab === 'antraege'"
+          @click="activeTab = 'antraege'"
+        >
+          Anträge
         </button>
       </nav>
 
@@ -542,6 +678,82 @@ watch(activeTab, (tab) => {
                   </ul>
                   <p v-if="!card.slots.length" class="muted">Keine Terminangaben.</p>
                 </template>
+              </div>
+            </li>
+          </ul>
+        </template>
+      </section>
+
+      <section v-show="activeTab === 'antraege'" class="results antraege-view">
+        <div v-if="antraegeLoading" class="loading">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Anträge werden geladen …</p>
+        </div>
+        <template v-else>
+          <p class="results-count">
+            {{ ANTRAGE_SCHOOL_IDS.length }} {{ ANTRAGE_SCHOOL_IDS.length === 1 ? 'Antrag' : 'Anträge' }}
+          </p>
+          <ul class="antraege-school-list">
+            <li
+              v-for="schoolId in ANTRAGE_SCHOOL_IDS"
+              :key="schoolId"
+              class="antraege-school-card"
+              :class="{ expanded: expandedAntraegeSchoolId === schoolId }"
+            >
+              <button
+                type="button"
+                class="antraege-school-header"
+                :aria-expanded="expandedAntraegeSchoolId === schoolId"
+                @click="toggleAntraegeSchool(schoolId)"
+              >
+                <span class="antraege-school-name">{{ antraegeSchoolDisplayName(schoolId) }}</span>
+                <span
+                  v-if="antraegeData[schoolId]?.assessmentTag"
+                  class="antraege-tag"
+                  :class="`antraege-tag--${antraegeData[schoolId].assessmentTag.key}`"
+                >
+                  {{ antraegeData[schoolId].assessmentTag.label }}
+                </span>
+                <span class="expand-icon" aria-hidden="true">{{ expandedAntraegeSchoolId === schoolId ? '−' : '+' }}</span>
+              </button>
+              <div v-show="expandedAntraegeSchoolId === schoolId" class="antraege-school-details">
+                <div class="antraege-school-block">
+                  <h3 class="antraege-block-title">Antrag (PDF)</h3>
+                  <a
+                    :href="antraegePdfUrl(schoolId)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="antraege-pdf-link"
+                  >
+                    {{ schoolId }}.pdf ansehen ↗
+                  </a>
+                </div>
+                <div class="antraege-school-block">
+                  <h3 class="antraege-block-title">Zuschuss-Checkliste</h3>
+                  <div v-if="antraegeData[schoolId]?.csvError" class="antraege-error">{{ antraegeData[schoolId].csvError }}</div>
+                  <ul v-else-if="antraegeData[schoolId]?.csvRows?.length" class="antraege-checklist">
+                    <li
+                      v-for="(row, rIdx) in antraegeData[schoolId].csvRows"
+                      :key="rIdx"
+                      class="antraege-checklist-row"
+                      :class="{ 'erfuellt-ja': row[1]?.trim() === 'X', 'erfuellt-nein': row[2]?.trim() === 'X' }"
+                    >
+                      <span class="antraege-criterion">{{ (row[0] || '').replace(/\s+/g, ' ').slice(0, 120) }}{{ (row[0] || '').length > 120 ? '…' : '' }}</span>
+                      <span class="antraege-status">
+                        <template v-if="row[1]?.trim() === 'X'">✓ erfüllt</template>
+                        <template v-else-if="row[2]?.trim() === 'X'">✗ nicht erfüllt</template>
+                        <template v-else>—</template>
+                      </span>
+                    </li>
+                  </ul>
+                  <p v-else class="muted">Keine Daten.</p>
+                </div>
+                <div class="antraege-school-block">
+                  <h3 class="antraege-block-title">Assessment</h3>
+                  <div v-if="antraegeData[schoolId]?.mdError" class="antraege-error">{{ antraegeData[schoolId].mdError }}</div>
+                  <pre v-else-if="antraegeData[schoolId]?.mdText" class="antraege-md-content">{{ antraegeData[schoolId].mdText }}</pre>
+                  <p v-else class="muted">Keine Daten.</p>
+                </div>
               </div>
             </li>
           </ul>
@@ -1158,5 +1370,179 @@ body {
   margin: 0;
   font-size: 0.9rem;
   color: #5c5c5c;
+}
+
+/* Anträge tab */
+.antraege-view {
+  margin-top: 0;
+}
+
+.antraege-view .loading {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.antraege-school-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.antraege-school-card {
+  background: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.antraege-school-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.antraege-school-header:hover {
+  background: #faf9f7;
+}
+
+.antraege-school-header .antraege-school-name {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  letter-spacing: -0.01em;
+  padding: 0;
+  border: none;
+}
+
+.antraege-tag {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.antraege-tag--ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.antraege-tag--nicht-ok {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.antraege-tag--ueberarbeitung {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.antraege-school-details {
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid #ebe8e4;
+}
+
+.antraege-school-block {
+  margin-top: 1.25rem;
+}
+
+.antraege-school-details .antraege-school-block:first-of-type {
+  margin-top: 1rem;
+}
+
+.antraege-block-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5c5c5c;
+}
+
+.antraege-pdf-link {
+  display: inline-block;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #2d6a4f;
+  text-decoration: none;
+}
+
+.antraege-pdf-link:hover {
+  text-decoration: underline;
+}
+
+.antraege-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.antraege-checklist-row {
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.375rem;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.antraege-checklist-row.erfuellt-ja {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.antraege-checklist-row.erfuellt-nein {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.antraege-criterion {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.antraege-status {
+  flex-shrink: 0;
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.antraege-md-content {
+  margin: 0;
+  padding: 1rem;
+  background: #faf9f7;
+  border-radius: 0.375rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #ebe8e4;
+}
+
+.antraege-error {
+  font-size: 0.9rem;
+  color: #991b1b;
+  padding: 0.5rem 0;
 }
 </style>
